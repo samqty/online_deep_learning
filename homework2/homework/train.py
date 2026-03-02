@@ -41,7 +41,7 @@ def train(
     model.train()
 
     # ensure data files exist so user knows where to run the script
-    base = Path(__file__).parent
+    base = Path(__file__).parent.parent
     train_path = base / "classification_data" / "train"
     val_path = base / "classification_data" / "val"
     if not (train_path / "labels.csv").exists():
