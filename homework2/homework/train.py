@@ -7,7 +7,7 @@ import torch
 import torch.utils.tensorboard as tb
 
 from .models import ClassificationLoss, load_model, save_model
-from .utils import load_data
+from .utils import load_data, compute_accuracy
 
 
 def train(
@@ -40,12 +40,19 @@ def train(
     model = model.to(device)
     model.train()
 
-    train_data = load_data("classification_data/train", shuffle=True, batch_size=batch_size, num_workers=2)
-    val_data = load_data("classification_data/val", shuffle=False)
+    # ensure data files exist so user knows where to run the script
+    base = Path(__file__).parent
+    train_path = base / "classification_data" / "train"
+    val_path = base / "classification_data" / "val"
+    if not (train_path / "labels.csv").exists():
+        raise FileNotFoundError(f"training data not found at {train_path!r}")
+
+    train_data = load_data(train_path, shuffle=True, batch_size=batch_size, num_workers=2)
+    val_data = load_data(val_path, shuffle=False)
 
     # create loss function and optimizer
     loss_func = ClassificationLoss()
-    # optimizer = ...
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     global_step = 0
     metrics = {"train_acc": [], "val_acc": []}
@@ -61,15 +68,18 @@ def train(
         for img, label in train_data:
             img, label = img.to(device), label.to(device)
 
-            # TODO: implement training step
+            # forward + backward + step
             pred = model(img)
             loss = loss_func(pred, label)
+            optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            optimizer.zero_grad()
+
+            # log iteration loss
+            logger.add_scalar("train_loss", loss.item(), global_step)
 
             # compute and store training accuracy
-            acc = (pred.argmax(dim=1) == label).float().mean()
+            acc = compute_accuracy(pred, label)
             metrics["train_acc"].append(acc.item())
 
             global_step += 1
@@ -81,17 +91,17 @@ def train(
             for img, label in val_data:
                 img, label = img.to(device), label.to(device)
 
-                # TODO: compute validation accuracy
+                # compute validation accuracy
                 pred = model(img)
-                acc = (pred.argmax(dim=1) == label).float().mean()
+                acc = compute_accuracy(pred, label)
                 metrics["val_acc"].append(acc.item())
 
         # log average train and val accuracy to tensorboard
         epoch_train_acc = torch.as_tensor(metrics["train_acc"]).mean()
         epoch_val_acc = torch.as_tensor(metrics["val_acc"]).mean()
 
-        logger.add_scalar("train_acc", epoch_train_acc, global_step)
-        logger.add_scalar("val_acc", epoch_val_acc, global_step)
+        logger.add_scalar("train_accuracy", epoch_train_acc, global_step)
+        logger.add_scalar("val_accuracy", epoch_val_acc, global_step)
 
         # print on first, last, every 10th epoch
         if epoch == 0 or epoch == num_epoch - 1 or (epoch + 1) % 10 == 0:
@@ -116,6 +126,7 @@ if __name__ == "__main__":
     parser.add_argument("--model_name", type=str, required=True)
     parser.add_argument("--num_epoch", type=int, default=50)
     parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--seed", type=int, default=2024)
 
     # optional: additional model hyperparamters
