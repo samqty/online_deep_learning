@@ -96,7 +96,7 @@ class MLPClassifier(nn.Module):
 
 class MLPClassifierDeep(nn.Module):
     def __init__(self, h: int = 64, w: int = 64, num_classes: int = 6, 
-                 hidden_dim: int = 50, num_layers: int = 5):
+                 hidden_dim: int = 128, num_layers: int = 5):
         super().__init__()
         num_layers = max(1, num_layers)
         
@@ -131,7 +131,7 @@ class MLPClassifierDeepResidual(nn.Module):
         h: int = 64,
         w: int = 64,
         num_classes: int = 6,
-        hidden_dim: int = 50,
+        hidden_dim: int = 128,
         num_layers: int = 5
     ):
         """
