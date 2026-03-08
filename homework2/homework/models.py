@@ -95,15 +95,46 @@ class MLPClassifier(nn.Module):
 
 
 class MLPClassifierDeep(nn.Module):
+    def __init__(self, h: int = 64, w: int = 64, num_classes: int = 6, 
+                 hidden_dim: int = 50, num_layers: int = 5):
+        super().__init__()
+        num_layers = max(1, num_layers)
+        
+        self.flatten = nn.Flatten()
+        self.relu = nn.ReLU()
+        
+        input_features = 3 * h * w
+        self.layers = nn.ModuleList()
+        
+        self.layers.append(nn.Linear(input_features, hidden_dim))
+        
+        # Subsequent transitions: Hidden-to-hidden logic
+        for _ in range(num_layers - 1):
+            self.layers.append(nn.Linear(hidden_dim, hidden_dim))
+            
+        self.out = nn.Linear(hidden_dim, num_classes)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Preserve batch dimension 'b' while collapsing (3, H, W)
+        x = self.flatten(x)
+        
+        # Dynamic traversal of the computational graph
+        for layer in self.layers:
+            x = self.relu(layer(x))
+            
+        return self.out(x)
+
+
+class MLPClassifierDeepResidual(nn.Module):
     def __init__(
         self,
         h: int = 64,
         w: int = 64,
         num_classes: int = 6,
+        hidden_dim: int = 50,
+        num_layers: int = 5
     ):
         """
-        An MLP with multiple hidden layers
-
         Args:
             h: int, height of image
             w: int, width of image
@@ -114,16 +145,20 @@ class MLPClassifierDeep(nn.Module):
             num_layers: int, number of hidden layers
         """
         super().__init__()
-
+        self.num_layers = num_layers
         self.flatten = nn.Flatten()
-        hidden = 128
-        # four hidden linear layers to satisfy grader's MIN_LAYERS=4
-        self.linear1 = nn.Linear(3 * h * w, hidden)
-        self.linear2 = nn.Linear(hidden, hidden)
-        self.linear3 = nn.Linear(hidden, hidden)
-        self.linear4 = nn.Linear(hidden, hidden)
+
+        # Use nn.ModuleList for dynamic layer creation [2]
+        self.layers = nn.ModuleList()
+        
+        self.layers.append(nn.Linear(3 * h * w, hidden_dim))
+        
+        # Remaining hidden layers
+        for _ in range(num_layers - 1):
+            self.layers.append(nn.Linear(hidden_dim, hidden_dim))
+            
+        self.out = nn.Linear(hidden_dim, num_classes)
         self.relu = nn.ReLU()
-        self.out = nn.Linear(hidden, num_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -134,54 +169,18 @@ class MLPClassifierDeep(nn.Module):
             tensor (b, num_classes) logits
         """
         x = self.flatten(x)
-        x = self.relu(self.linear1(x))
-        x = self.relu(self.linear2(x))
-        x = self.relu(self.linear3(x))
-        x = self.relu(self.linear4(x))
+        h_first = None
+        
+        for i, layer in enumerate(self.layers):
+            if i == self.num_layers - 1 and h_first is not None:
+                # Generalizing the residual skip: Add the first hidden layer's output 
+                x = self.relu(layer(x + h_first))
+            else:
+                x = self.relu(layer(x))
+                if i == 0:
+                    h_first = x
+                    
         return self.out(x)
-
-
-class MLPClassifierDeepResidual(nn.Module):
-    def __init__(
-        self,
-        h: int = 64,
-        w: int = 64,
-        num_classes: int = 6,
-    ):
-        """
-        Args:
-            h: int, height of image
-            w: int, width of image
-            num_classes: int
-
-        Deep residual MLP with at least four linear+ReLU layers and a skip.
-        """
-        super().__init__()
-
-        hidden = 128
-        self.flatten = nn.Flatten()
-        self.linear1 = nn.Linear(3 * h * w, hidden)
-        self.linear2 = nn.Linear(hidden, hidden)
-        self.linear3 = nn.Linear(hidden, hidden)
-        self.linear4 = nn.Linear(hidden, hidden)
-        self.out = nn.Linear(hidden, num_classes)
-        self.relu = nn.ReLU()
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            x: tensor (b, 3, H, W) image
-
-        Returns:
-            tensor (b, num_classes) logits
-        """
-        x = self.flatten(x)
-        h1 = self.relu(self.linear1(x))
-        h2 = self.relu(self.linear2(h1))
-        h3 = self.relu(self.linear3(h2))
-        # residual skip from h1 into the fourth layer
-        h4 = self.relu(self.linear4(h3 + h1))
-        return self.out(h4)
 
 
 model_factory = {
