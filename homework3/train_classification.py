@@ -80,8 +80,8 @@ def train_classification(
             writer.add_scalar("train/acc", acc.item(), global_step)
             global_step += 1
 
-        epoch_loss = running_loss / len(train_dataset)
-        epoch_acc = running_acc / len(train_dataset)
+        epoch_loss = running_loss / len(train_loader.dataset)
+        epoch_acc = running_acc / len(train_loader.dataset)
 
         model.eval()
         val_loss = 0.0
@@ -96,8 +96,8 @@ def train_classification(
                 val_loss += loss.item() * x.size(0)
                 val_acc += acc.item() * x.size(0)
 
-        val_loss /= len(val_dataset)
-        val_acc /= len(val_dataset)
+        val_loss /= len(val_loader.dataset)
+        val_acc /= len(val_loader.dataset)
 
         writer.add_scalar("epoch/train_loss", epoch_loss, epoch)
         writer.add_scalar("epoch/train_acc", epoch_acc, epoch)
