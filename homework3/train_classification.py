@@ -7,7 +7,7 @@ import torch
 import torch.utils.tensorboard as tb
 
 from homework.models import ClassificationLoss, load_model, save_model
-from homework.datasets.classification_dataset import ClassificationDataset
+from homework.datasets.classification_dataset import load_data
 from homework.metrics import compute_accuracy
 
 
@@ -40,22 +40,19 @@ def train_classification(
     model = load_model(model_name, **kwargs)
     model = model.to(device)
 
-    train_dataset = ClassificationDataset("classification_data/train")
-    val_dataset = ClassificationDataset("classification_data/val")
-
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset,
+    train_loader = load_data(
+        "classification_data/train",
+        transform_pipeline="aug",
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=True,
     )
-    val_loader = torch.utils.data.DataLoader(
-        val_dataset,
+    val_loader = load_data(
+        "classification_data/val",
+        transform_pipeline="default",
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=True,
     )
 
     criterion = ClassificationLoss()
