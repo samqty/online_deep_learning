@@ -38,22 +38,6 @@ def compute_accuracy(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor
     correct = (preds == labels).float().sum()
     return correct / labels.numel()
 
-        """
-        Updates using predictions and ground truth labels
-
-        Args:
-            preds (torch.LongTensor): (b,) or (b, h, w) tensor with class predictions
-            labels (torch.LongTensor): (b,) or (b, h, w) tensor with ground truth class labels
-        """
-        self.correct += (preds.type_as(labels) == labels).sum().item()
-        self.total += labels.numel()
-
-    def compute(self) -> dict[str, float]:
-        return {
-            "accuracy": self.correct / (self.total + 1e-5),
-            "num_samples": self.total,
-        }
-
 
 class DetectionMetric:
     """
