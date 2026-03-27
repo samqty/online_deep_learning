@@ -8,6 +8,15 @@ INPUT_MEAN = [0.2788, 0.2657, 0.2629]
 INPUT_STD = [0.2064, 0.1944, 0.2252]
 
 
+class ClassificationLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self._loss_fn = nn.CrossEntropyLoss()
+
+    def forward(self, logits: torch.Tensor, target: torch.LongTensor) -> torch.Tensor:
+        return self._loss_fn(logits, target)
+
+
 class Classifier(nn.Module):
     def __init__(
         self,
