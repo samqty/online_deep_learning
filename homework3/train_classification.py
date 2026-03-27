@@ -21,7 +21,7 @@ def get_device():
 
 def train_classification(
     exp_dir: str = "logs",
-    model_name: str = "linear",
+    model_name: str = "classifier",
     num_epoch: int = 50,
     lr: float = 1e-3,
     batch_size: int = 128,
@@ -121,7 +121,7 @@ def train_classification(
 def main():
     parser = argparse.ArgumentParser(description="Classification training script")
     parser.add_argument("--exp_dir", type=str, default="logs")
-    parser.add_argument("--model_name", type=str, default="linear")
+    parser.add_argument("--model_name", type=str, default="classifier")
     parser.add_argument("--num_epoch", type=int, default=50)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--batch_size", type=int, default=128)
