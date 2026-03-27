@@ -141,9 +141,10 @@ def train_detection(
         )
 
         if epoch % 5 == 0 or epoch == num_epoch:
-            save_model(model)
             torch.save(model.state_dict(), log_dir / f"detector_epoch_{epoch}.pth")
 
+    # Always save final model
+    save_model(model)
     writer.close()
     return model
 

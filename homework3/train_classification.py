@@ -111,9 +111,10 @@ def train_classification(
         )
 
         if epoch % 10 == 0 or epoch == num_epoch:
-            save_model(model)
             torch.save(model.state_dict(), log_dir / f"{model_name}_epoch_{epoch}.pth")
 
+    # Always save final model
+    save_model(model)
     writer.close()
     return model
 
