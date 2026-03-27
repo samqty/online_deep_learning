@@ -140,7 +140,7 @@ class Detector(torch.nn.Module):
                 - depth (b, h, w)
         """
         # optional: normalizes the input
-        z = (x -torch.sigmoid(raw_depth)ut_mean[None, :, None, None]) / self.input_std[None, :, None, None]
+        z = (x - self.input_mean[None, :, None, None]) / self.input_std[None, :, None, None]
 
         # Downsampling
         down1_out = self.down1(z)
