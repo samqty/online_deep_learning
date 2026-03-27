@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import torch.utils.tensorboard as tb
 
-from homework.models import Detector, save_model
+from homework.models import Detector, save_model, HOMEWORK_DIR
 from homework.datasets.road_dataset import load_data as load_road_data
 from homework.metrics import DetectionMetric
 
@@ -144,7 +144,18 @@ def train_detection(
             torch.save(model.state_dict(), log_dir / f"detector_epoch_{epoch}.pth")
 
     # Always save final model
-    save_model(model)
+    print(f"DEBUG: Model type = {type(model).__name__}")
+    print(f"DEBUG: Model is on device: {next(model.parameters()).device}")
+    model_cpu = model.cpu()  # Move to CPU for saving
+    try:
+        # Explicitly save detector model
+        output_path = HOMEWORK_DIR / "detector.th"
+        torch.save(model_cpu.state_dict(), output_path)
+        print(f"✓ Detector saved to {output_path}")
+    except Exception as e:
+        print(f"✗ Failed to save detector: {e}")
+        import traceback
+        traceback.print_exc()
     writer.close()
     return model
 
