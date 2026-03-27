@@ -98,7 +98,7 @@ class Detector(torch.nn.Module):
         num_classes: int = 3,
     ):
         """
-        A single model that performs segmentation and depth regression
+        A single model that performs segmentation and depth regression with U-Net skip connections.
 
         Args:
             in_channels: int, number of input channels
@@ -109,38 +109,64 @@ class Detector(torch.nn.Module):
         self.register_buffer("input_mean", torch.as_tensor(INPUT_MEAN))
         self.register_buffer("input_std", torch.as_tensor(INPUT_STD))
 
-        # Downsampling layers
-        self.down1 = nn.Sequential(
-            nn.Conv2d(in_channels, 16, 3, stride=2, padding=1),
-            nn.BatchNorm2d(16),
-            nn.ReLU()
-        )
-        self.down2 = nn.Sequential(
-            nn.Conv2d(16, 32, 3, stride=2, padding=1),
+        # Encoder (downsampling)
+        self.enc1 = nn.Sequential(
+            nn.Conv2d(in_channels, 32, 3, padding=1),
             nn.BatchNorm2d(32),
-            nn.ReLU()
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 32, 3, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
+        )
+        self.pool1 = nn.MaxPool2d(2, 2)
+        
+        self.enc2 = nn.Sequential(
+            nn.Conv2d(32, 64, 3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 64, 3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+        )
+        self.pool2 = nn.MaxPool2d(2, 2)
+        
+        self.bottleneck = nn.Sequential(
+            nn.Conv2d(64, 128, 3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(128, 128, 3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
         )
         
-        # Upsampling layers
-        self.up1 = nn.ConvTranspose2d(32, 16, 4, stride=2, padding=1)
-        self.up1_bn = nn.BatchNorm2d(16)
-        self.up1_conv = nn.Sequential(
-            nn.Conv2d(32, 16, 3, padding=1),  # After concat
-            nn.BatchNorm2d(16),
-            nn.ReLU()
+        # Decoder (upsampling) with skip connections
+        self.upconv2 = nn.ConvTranspose2d(128, 64, 4, stride=2, padding=1)
+        self.dec2 = nn.Sequential(
+            nn.Conv2d(128, 64, 3, padding=1),  # 64 + 64 from skip = 128
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 64, 3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
         )
         
-        self.up2 = nn.ConvTranspose2d(16, 16, 4, stride=2, padding=1)
-        self.up2_bn = nn.BatchNorm2d(16)
+        self.upconv1 = nn.ConvTranspose2d(64, 32, 4, stride=2, padding=1)
+        self.dec1 = nn.Sequential(
+            nn.Conv2d(64, 32, 3, padding=1),  # 32 + 32 from skip = 64
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 32, 3, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
+        )
         
-        # Heads
-        self.segmentation_head = nn.Conv2d(16, num_classes, 1)
-        self.depth_head = nn.Conv2d(16, 1, 1)
+        # Output heads
+        self.segmentation_head = nn.Conv2d(32, num_classes, 1)
+        self.depth_head = nn.Conv2d(32, 1, 1)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Used in training, takes an image and returns raw logits and raw depth.
-        This is what the loss functions use as input.
 
         Args:
             x (torch.FloatTensor): image with shape (b, 3, h, w) and vals in [0, 1]
@@ -150,30 +176,36 @@ class Detector(torch.nn.Module):
                 - logits (b, num_classes, h, w)
                 - depth (b, h, w)
         """
-        # optional: normalizes the input
+        # Normalize input
         z = (x - self.input_mean[None, :, None, None]) / self.input_std[None, :, None, None]
 
-        # Downsampling
-        down1_out = self.down1(z)
-        down2_out = self.down2(down1_out)
+        # Encoder with skip connection storage
+        enc1_out = self.enc1(z)
+        z = self.pool1(enc1_out)
         
-        # Upsampling with skip connections
-        up1_out = torch.relu(self.up1_bn(self.up1(down2_out)))
-        up1_out = torch.cat([up1_out, down1_out], dim=1)
-        up1_out = self.up1_conv(up1_out)
+        enc2_out = self.enc2(z)
+        z = self.pool2(enc2_out)
         
-        up2_out = torch.relu(self.up2_bn(self.up2(up1_out)))
+        z = self.bottleneck(z)
         
-        # Heads
-        logits = self.segmentation_head(up2_out)
-        raw_depth = self.depth_head(up2_out).squeeze(1)
+        # Decoder with skip connections
+        z = self.upconv2(z)
+        z = torch.cat([z, enc2_out], dim=1)
+        z = self.dec2(z)
+        
+        z = self.upconv1(z)
+        z = torch.cat([z, enc1_out], dim=1)
+        z = self.dec1(z)
+        
+        # Output heads
+        logits = self.segmentation_head(z)
+        raw_depth = self.depth_head(z).squeeze(1)
 
         return logits, raw_depth
 
     def predict(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Used for inference, takes an image and returns class labels and normalized depth.
-        This is what the metrics use as input (this is what the grader will use!).
 
         Args:
             x (torch.FloatTensor): image with shape (b, 3, h, w) and vals in [0, 1]
@@ -185,8 +217,6 @@ class Detector(torch.nn.Module):
         """
         logits, raw_depth = self(x)
         pred = logits.argmax(dim=1)
-
-        # Optional additional post-processing for depth only if needed
         depth = raw_depth
 
         return pred, depth
