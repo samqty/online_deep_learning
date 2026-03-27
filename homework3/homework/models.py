@@ -22,6 +22,8 @@ class Classifier(nn.Module):
         self,
         in_channels: int = 3,
         num_classes: int = 6,
+        hidden_dim: int = 128,
+        num_layers: int = 2,
     ):
         """
         A convolutional network for image classification.
