@@ -32,6 +32,13 @@ class AccuracyMetric:
         }
 
 
+def compute_accuracy(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    """Utility function for compatibility with previous homework API."""
+    preds = logits.argmax(dim=1)
+    correct = (preds == labels).float().sum()
+    return correct / labels.numel()
+
+
 class DetectionMetric:
     """
     Computes iou and depth metrics
