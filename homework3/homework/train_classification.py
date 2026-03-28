@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import torch.utils.tensorboard as tb
 
-from homework.models import ClassificationLoss, load_model, save_model, HOMEWORK_DIR
+from homework.models import ClassificationLoss, load_model, save_model
 from homework.datasets.classification_dataset import load_data
 from homework.metrics import compute_accuracy
 
@@ -33,6 +33,15 @@ def train_classification(
     torch.manual_seed(seed)
     np.random.seed(seed)
 
+    root_dir = Path(__file__).resolve().parent.parent
+    train_path = root_dir / "classification_data" / "train"
+    val_path = root_dir / "classification_data" / "val"
+
+    if not (train_path / "labels.csv").exists():
+        raise FileNotFoundError(f"training data not found at {train_path!r}")
+    if not (val_path / "labels.csv").exists():
+        raise FileNotFoundError(f"validation data not found at {val_path!r}")
+
     log_dir = Path(exp_dir) / f"{model_name}_{datetime.now().strftime('%m%d_%H%M%S')}"
     log_dir.mkdir(parents=True, exist_ok=True)
     writer = tb.SummaryWriter(log_dir)
@@ -41,14 +50,14 @@ def train_classification(
     model = model.to(device)
 
     train_loader = load_data(
-        "classification_data/train",
+        train_path,
         transform_pipeline="aug",
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
     )
     val_loader = load_data(
-        "classification_data/val",
+        val_path,
         transform_pipeline="default",
         batch_size=batch_size,
         shuffle=False,
@@ -86,7 +95,7 @@ def train_classification(
         model.eval()
         val_loss = 0.0
         val_acc = 0.0
-        with torch.no_grad():
+        with torch.inference_mode():
             for x, y in val_loader:
                 x, y = x.to(device), y.to(device)
                 logits = model(x)
@@ -113,19 +122,12 @@ def train_classification(
         if epoch % 10 == 0 or epoch == num_epoch:
             torch.save(model.state_dict(), log_dir / f"{model_name}_epoch_{epoch}.pth")
 
-    # Always save final model
-    print(f"DEBUG: Model type = {type(model).__name__}")
-    print(f"DEBUG: Model is on device: {next(model.parameters()).device}")
-    model_cpu = model.cpu()  # Move to CPU for saving
-    try:
-        # Explicitly save with the correct model_name
-        output_path = HOMEWORK_DIR / f"{model_name}.th"
-        torch.save(model_cpu.state_dict(), output_path)
-        print(f"✓ Model saved to {output_path}")
-    except Exception as e:
-        print(f"✗ Failed to save model: {e}")
-        import traceback
-        traceback.print_exc()
+    model_cpu = model.cpu()
+    output_path = save_model(model_cpu)
+    torch.save(model_cpu.state_dict(), log_dir / f"{model_name}.th")
+    print(f"✓ Model saved to {output_path}")
+    print(f"✓ Checkpoint saved to {log_dir / f'{model_name}.th'}")
+
     writer.close()
     return model
 

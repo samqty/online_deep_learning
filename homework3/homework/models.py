@@ -19,13 +19,10 @@ class ClassificationLoss(nn.Module):
 
 
 class Classifier(nn.Module):
-    # Original starter contained TODO placeholders here for classifier implementation.
     def __init__(
         self,
         in_channels: int = 3,
-        num_classes: int = 6,
-        hidden_dim: int = 128,
-        num_layers: int = 2,
+        num_classes: int = 6
     ):
         """
         A convolutional network for image classification.
@@ -38,10 +35,6 @@ class Classifier(nn.Module):
 
         self.register_buffer("input_mean", torch.as_tensor(INPUT_MEAN))
         self.register_buffer("input_std", torch.as_tensor(INPUT_STD))
-
-        # Implemented the classifier body in place of the original TODO.
-        # Uses 3 conv blocks with BatchNorm, ReLU, and max pooling, plus global avg pool.
-        # Keeps hidden_dim / num_layers constructor args for backward compatibility.
 
         # Convolutional layers
         self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=3, padding=1)
@@ -69,7 +62,6 @@ class Classifier(nn.Module):
         # optional: normalizes the input
         z = (x - self.input_mean[None, :, None, None]) / self.input_std[None, :, None, None]
 
-        # Replaced the original forward-pass TODO with the actual conv / pool / global avg structure.
         # Convolutional layers with pooling
         z = self.pool(torch.relu(self.bn1(self.conv1(z))))
         z = self.pool(torch.relu(self.bn2(self.conv2(z))))
@@ -99,7 +91,6 @@ class Classifier(nn.Module):
 
 
 class Detector(torch.nn.Module):
-    # Original starter contained TODO placeholders here for detector implementation.
     def __init__(
         self,
         in_channels: int = 3,
@@ -117,9 +108,7 @@ class Detector(torch.nn.Module):
         self.register_buffer("input_mean", torch.as_tensor(INPUT_MEAN))
         self.register_buffer("input_std", torch.as_tensor(INPUT_STD))
 
-        # Implemented the detector body in place of the original TODO.
         # U-Net style encoder-decoder with skip connections and separate segmentation/depth heads.
-
         # Encoder (downsampling)
         self.enc1 = nn.Sequential(
             nn.Conv2d(in_channels, 32, 3, padding=1),
@@ -190,7 +179,6 @@ class Detector(torch.nn.Module):
         # Normalize input
         z = (x - self.input_mean[None, :, None, None]) / self.input_std[None, :, None, None]
 
-        # Replaced the original forward-pass TODO with actual encoder/decoder and skip connections.
         # Encoder with skip connection storage
         enc1_out = self.enc1(z)
         z = self.pool1(enc1_out)
@@ -240,7 +228,6 @@ MODEL_FACTORY = {
     "detector": Detector,
 }
 
-# load_model now supports optional weight loading and enforces a 20 MB size cap for submissions.
 def load_model(
     model_name: str,
     with_weights: bool = False,

@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import torch.utils.tensorboard as tb
 
-from homework.models import Detector, save_model, HOMEWORK_DIR
+from homework.models import Detector, save_model
 from homework.datasets.road_dataset import load_data as load_road_data
 from homework.metrics import DetectionMetric
 
@@ -35,24 +35,34 @@ def train_detection(
     torch.manual_seed(seed)
     np.random.seed(seed)
 
+    root_dir = Path(__file__).resolve().parent.parent
+    train_path = root_dir / "drive_data" / "train"
+    val_path = root_dir / "drive_data" / "val"
+
+    if not train_path.exists():
+        raise FileNotFoundError(f"training data not found at {train_path!r}")
+    if not val_path.exists():
+        raise FileNotFoundError(f"validation data not found at {val_path!r}")
+
     log_dir = Path(exp_dir) / f"detector_{datetime.now().strftime('%m%d_%H%M%S')}"
     log_dir.mkdir(parents=True, exist_ok=True)
     writer = tb.SummaryWriter(log_dir)
 
     model = Detector(in_channels=in_channels, num_classes=num_classes).to(device)
 
-    train_loader = load_road_data("drive_data/train", batch_size=batch_size, shuffle=True, num_workers=num_workers)
-    val_loader = load_road_data("drive_data/val", batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    train_loader = load_road_data(train_path, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    val_loader = load_road_data(val_path, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
     seg_criterion = torch.nn.CrossEntropyLoss()
     depth_criterion = torch.nn.L1Loss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     metric = DetectionMetric(num_classes=num_classes)
-
     global_step = 0
+
     for epoch in range(1, num_epoch + 1):
         model.train()
+        metric.reset()
         total_loss = 0.0
         total_seg_loss = 0.0
         total_depth_loss = 0.0
@@ -85,7 +95,6 @@ def train_detection(
             global_step += 1
 
         train_metrics = metric.compute()
-        metric.reset()
 
         n_train = len(train_loader.dataset)
         epoch_loss = total_loss / n_train
@@ -93,11 +102,12 @@ def train_detection(
         epoch_depth_loss = total_depth_loss / n_train
 
         model.eval()
+        metric.reset()
         val_loss = 0.0
         val_seg_loss = 0.0
         val_depth_loss = 0.0
 
-        with torch.no_grad():
+        with torch.inference_mode():
             for batch in val_loader:
                 images = batch["image"].to(device)
                 track = batch["track"].to(device)
@@ -117,17 +127,17 @@ def train_detection(
                 metric.add(pred, track, depth_pred, depth)
 
         val_metrics = metric.compute()
-        metric.reset()
 
         n_val = len(val_loader.dataset)
 
         writer.add_scalar("epoch/train_loss", epoch_loss, epoch)
         writer.add_scalar("epoch/train_seg_loss", epoch_seg_loss, epoch)
         writer.add_scalar("epoch/train_depth_loss", epoch_depth_loss, epoch)
+        writer.add_scalar("epoch/train_iou", train_metrics["iou"], epoch)
+        writer.add_scalar("epoch/train_accuracy", train_metrics["accuracy"], epoch)
         writer.add_scalar("epoch/val_loss", val_loss / n_val, epoch)
         writer.add_scalar("epoch/val_seg_loss", val_seg_loss / n_val, epoch)
         writer.add_scalar("epoch/val_depth_loss", val_depth_loss / n_val, epoch)
-
         writer.add_scalar("epoch/val_iou", val_metrics["iou"], epoch)
         writer.add_scalar("epoch/val_accuracy", val_metrics["accuracy"], epoch)
         writer.add_scalar("epoch/val_abs_depth_error", val_metrics["abs_depth_error"], epoch)
@@ -143,19 +153,12 @@ def train_detection(
         if epoch % 5 == 0 or epoch == num_epoch:
             torch.save(model.state_dict(), log_dir / f"detector_epoch_{epoch}.pth")
 
-    # Always save final model
-    print(f"DEBUG: Model type = {type(model).__name__}")
-    print(f"DEBUG: Model is on device: {next(model.parameters()).device}")
-    model_cpu = model.cpu()  # Move to CPU for saving
-    try:
-        # Explicitly save detector model
-        output_path = HOMEWORK_DIR / "detector.th"
-        torch.save(model_cpu.state_dict(), output_path)
-        print(f"✓ Detector saved to {output_path}")
-    except Exception as e:
-        print(f"✗ Failed to save detector: {e}")
-        import traceback
-        traceback.print_exc()
+    model_cpu = model.cpu()
+    output_path = save_model(model_cpu)
+    torch.save(model_cpu.state_dict(), log_dir / "detector.th")
+    print(f"✓ Detector saved to {output_path}")
+    print(f"✓ Checkpoint saved to {log_dir / 'detector.th'}")
+
     writer.close()
     return model
 
@@ -171,6 +174,7 @@ def main():
     parser.add_argument("--seg_weight", type=float, default=1.0)
     parser.add_argument("--depth_weight", type=float, default=1.0)
     parser.add_argument("--num_classes", type=int, default=3)
+    parser.add_argument("--in_channels", type=int, default=3)
     args = parser.parse_args()
 
     train_detection(
@@ -182,6 +186,7 @@ def main():
         num_workers=args.num_workers,
         seg_weight=args.seg_weight,
         depth_weight=args.depth_weight,
+        in_channels=args.in_channels,
         num_classes=args.num_classes,
     )
 
