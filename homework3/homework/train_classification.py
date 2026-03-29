@@ -6,9 +6,9 @@ import numpy as np
 import torch
 import torch.utils.tensorboard as tb
 
-from homework.models import ClassificationLoss, load_model, save_model
-from homework.datasets.classification_dataset import load_data
-from homework.metrics import compute_accuracy
+from .models import ClassificationLoss, load_model, save_model
+from .datasets.classification_dataset import load_data
+from .metrics import compute_accuracy
 
 
 def get_device():

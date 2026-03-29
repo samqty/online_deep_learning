@@ -6,9 +6,9 @@ import numpy as np
 import torch
 import torch.utils.tensorboard as tb
 
-from homework.models import Detector, save_model
-from homework.datasets.road_dataset import load_data as load_road_data
-from homework.metrics import DetectionMetric
+from .models import Detector, save_model
+from .datasets.road_dataset import load_data as load_road_data
+from .metrics import DetectionMetric
 
 
 def get_device():
