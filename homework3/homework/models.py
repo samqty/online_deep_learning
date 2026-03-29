@@ -224,7 +224,6 @@ class Detector(torch.nn.Module):
 
 MODEL_FACTORY = {
     "classifier": Classifier,
-    "linear": Classifier,  # legacy alias / compatibility with homework2 naming
     "detector": Detector,
 }
 
