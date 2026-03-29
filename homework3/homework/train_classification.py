@@ -141,8 +141,6 @@ def main():
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--seed", type=int, default=2024)
     parser.add_argument("--num_workers", type=int, default=4)
-    parser.add_argument("--hidden_dim", type=int, default=128)
-    parser.add_argument("--num_layers", type=int, default=2)
     args = parser.parse_args()
 
     train_classification(
@@ -153,8 +151,6 @@ def main():
         batch_size=args.batch_size,
         seed=args.seed,
         num_workers=args.num_workers,
-        hidden_dim=args.hidden_dim,
-        num_layers=args.num_layers,
     )
 
 
