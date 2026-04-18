@@ -192,7 +192,14 @@ def train(
                 loss = loss_fn(pred, y)
             else:
                 # Mask out invalid waypoints for loss computation
-                loss = loss_fn(pred * y_mask[:, :, None], y * y_mask[:, :, None])
+                masked_pred = pred * y_mask[:, :, None]
+                masked_y = y * y_mask[:, :, None]
+                if model_name == "transformer_planner":
+                    lon_loss = loss_fn(masked_pred[..., 0], masked_y[..., 0])
+                    lat_loss = loss_fn(masked_pred[..., 1], masked_y[..., 1])
+                    loss = lon_loss + 2.0 * lat_loss
+                else:
+                    loss = loss_fn(masked_pred, masked_y)
 
             # Backward pass
             optimizer.zero_grad()

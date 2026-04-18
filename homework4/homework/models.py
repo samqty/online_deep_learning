@@ -112,11 +112,12 @@ class TransformerPlanner(nn.Module):
         # Embedding for waypoint queries (latent array)
         self.query_embed = nn.Embedding(n_waypoints, d_model)
 
-        # Project input track points to d_model dimension
-        self.input_proj = nn.Linear(2, d_model)
+        # Project input track points (centerline and width) to d_model dimension
+        self.input_proj = nn.Linear(4, d_model)
 
-        # Positional encoding for track points
-        self.track_pos_embed = nn.Embedding(n_track * 2, d_model)  # left + right
+        # Positional encoding for track points along the track
+        self.track_pos_embed = nn.Embedding(n_track, d_model)
+        self.query_pos_embed = nn.Embedding(n_waypoints, d_model)
 
         # Transformer decoder layer with cross-attention
         decoder_layer = nn.TransformerDecoderLayer(
@@ -171,14 +172,16 @@ class TransformerPlanner(nn.Module):
         """
         batch_size = track_left.shape[0]
 
-        # Concatenate track points: (b, n_track * 2, 2)
-        track_points = torch.cat([track_left, track_right], dim=1)
+        # Compute centerline and width features for each track point
+        track_center = (track_left + track_right) * 0.5
+        track_width = track_right - track_left
+        track_points = torch.cat([track_center, track_width], dim=-1)
 
-        # Project track points to d_model dimension: (b, n_track * 2, d_model)
+        # Project track points to d_model dimension: (b, n_track, d_model)
         memory = self.input_proj(track_points)
 
-        # Add positional embeddings
-        track_indices = torch.arange(self.n_track * 2, device=track_left.device)
+        # Add positional embeddings along the track sequence
+        track_indices = torch.arange(self.n_track, device=track_left.device)
         track_pos = self.track_pos_embed(track_indices).unsqueeze(0).expand(batch_size, -1, -1)
         memory = memory + track_pos
 
@@ -186,6 +189,7 @@ class TransformerPlanner(nn.Module):
         # Expand batch dimension: (b, n_waypoints, d_model)
         query_indices = torch.arange(self.n_waypoints, device=track_left.device)
         tgt = self.query_embed(query_indices).unsqueeze(0).expand(batch_size, -1, -1)
+        tgt = tgt + self.query_pos_embed(query_indices).unsqueeze(0).expand(batch_size, -1, -1)
 
         # Apply transformer decoder
         # tgt: (b, n_waypoints, d_model)
