@@ -297,22 +297,31 @@ class CNNPlanner(torch.nn.Module):
             if module.bias is not None:
                 nn.init.zeros_(module.bias)
 
-    def forward(self, image: torch.Tensor, track_left: torch.Tensor, track_right: torch.Tensor, **kwargs) -> torch.Tensor:
+    def forward(
+        self,
+        image: torch.Tensor,
+        track_left: torch.Tensor | None = None,
+        track_right: torch.Tensor | None = None,
+        **kwargs,
+    ) -> torch.Tensor:
         """
         Args:
             image (torch.FloatTensor): shape (b, 3, h, w) and vals in [0, 1]
-            track_left (torch.Tensor): shape (b, n_track, 2)
-            track_right (torch.Tensor): shape (b, n_track, 2)
+            track_left (torch.Tensor, optional): shape (b, n_track, 2)
+            track_right (torch.Tensor, optional): shape (b, n_track, 2)
 
         Returns:
             torch.FloatTensor: future waypoints with shape (b, n, 2)
         """
         batch_size = image.shape[0]
 
-        # Encode track boundaries
-        track_combined = torch.cat([track_left, track_right], dim=-1)  # (b, n_track, 4)
-        track_flat = track_combined.view(batch_size, -1)  # (b, n_track * 4)
-        track_features = self.track_encoder(track_flat)  # (b, 128)
+        # Encode track boundaries if provided, otherwise use a learned zero prior
+        if track_left is not None and track_right is not None:
+            track_combined = torch.cat([track_left, track_right], dim=-1)  # (b, n_track, 4)
+            track_flat = track_combined.view(batch_size, -1)  # (b, n_track * 4)
+            track_features = self.track_encoder(track_flat)  # (b, 128)
+        else:
+            track_features = torch.zeros(batch_size, 128, device=image.device, dtype=image.dtype)
 
         # Process image
         x = image
