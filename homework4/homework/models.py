@@ -13,13 +13,15 @@ class MLPPlanner(nn.Module):
         self,
         n_track: int = 10,
         n_waypoints: int = 3,
-        hidden_dim: int = 128,
+        hidden_dim: int = 256,  # Increased from 128
+        dropout: float = 0.1,
     ):
         """
         Args:
             n_track (int): number of points in each side of the track
             n_waypoints (int): number of waypoints to predict
             hidden_dim (int): hidden dimension for MLP layers
+            dropout (float): dropout probability
         """
         super().__init__()
 
@@ -32,13 +34,28 @@ class MLPPlanner(nn.Module):
 
         self.mlp = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
+            nn.BatchNorm1d(hidden_dim),  # Added batch normalization
             nn.ReLU(),
+            nn.Dropout(dropout),  # Added dropout
             nn.Linear(hidden_dim, hidden_dim),
+            nn.BatchNorm1d(hidden_dim),
             nn.ReLU(),
+            nn.Dropout(dropout),
             nn.Linear(hidden_dim, hidden_dim),
+            nn.BatchNorm1d(hidden_dim),
             nn.ReLU(),
+            nn.Dropout(dropout),
             nn.Linear(hidden_dim, output_dim),
         )
+
+        # Better weight initialization
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            nn.init.xavier_uniform_(module.weight)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
 
     def forward(
         self,
@@ -80,10 +97,11 @@ class TransformerPlanner(nn.Module):
         self,
         n_track: int = 10,
         n_waypoints: int = 3,
-        d_model: int = 64,
-        nhead: int = 4,
-        num_decoder_layers: int = 2,
-        dim_feedforward: int = 256,
+        d_model: int = 128,  # Increased from 64
+        nhead: int = 8,      # Increased from 4
+        num_decoder_layers: int = 3,  # Increased from 2
+        dim_feedforward: int = 512,   # Increased from 256
+        dropout: float = 0.1,
     ):
         super().__init__()
 
@@ -97,11 +115,15 @@ class TransformerPlanner(nn.Module):
         # Project input track points to d_model dimension
         self.input_proj = nn.Linear(2, d_model)
 
+        # Positional encoding for track points
+        self.track_pos_embed = nn.Embedding(n_track * 2, d_model)  # left + right
+
         # Transformer decoder layer with cross-attention
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=d_model,
             nhead=nhead,
             dim_feedforward=dim_feedforward,
+            dropout=dropout,
             batch_first=True,
         )
 
@@ -111,8 +133,22 @@ class TransformerPlanner(nn.Module):
             num_layers=num_decoder_layers,
         )
 
+        # Layer normalization
+        self.norm = nn.LayerNorm(d_model)
+
         # Output projection to 2D waypoints
         self.output_proj = nn.Linear(d_model, 2)
+
+        # Better initialization
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            nn.init.xavier_uniform_(module.weight)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            nn.init.normal_(module.weight, mean=0, std=0.02)
 
     def forward(
         self,
@@ -137,9 +173,14 @@ class TransformerPlanner(nn.Module):
 
         # Concatenate track points: (b, n_track * 2, 2)
         track_points = torch.cat([track_left, track_right], dim=1)
-        
+
         # Project track points to d_model dimension: (b, n_track * 2, d_model)
         memory = self.input_proj(track_points)
+
+        # Add positional embeddings
+        track_indices = torch.arange(self.n_track * 2, device=track_left.device)
+        track_pos = self.track_pos_embed(track_indices).unsqueeze(0).expand(batch_size, -1, -1)
+        memory = memory + track_pos
 
         # Get query embeddings for waypoints: (n_waypoints, d_model)
         # Expand batch dimension: (b, n_waypoints, d_model)
@@ -150,6 +191,9 @@ class TransformerPlanner(nn.Module):
         # tgt: (b, n_waypoints, d_model)
         # memory: (b, n_track * 2, d_model)
         output = self.transformer_decoder(tgt, memory)
+
+        # Apply layer normalization
+        output = self.norm(output)
 
         # Project to 2D waypoints: (b, n_waypoints, 2)
         waypoints = self.output_proj(output)
@@ -169,28 +213,55 @@ class CNNPlanner(torch.nn.Module):
         self.register_buffer("input_mean", torch.as_tensor(INPUT_MEAN), persistent=False)
         self.register_buffer("input_std", torch.as_tensor(INPUT_STD), persistent=False)
 
-        # CNN backbone for image processing
-        self.features = nn.Sequential(
-            # Input: (B, 3, 96, 128)
-            nn.Conv2d(3, 32, kernel_size=3, padding=1, stride=2),  # (B, 32, 48, 64)
-            nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=3, padding=1, stride=2),  # (B, 64, 24, 32)
-            nn.ReLU(),
-            nn.Conv2d(64, 128, kernel_size=3, padding=1, stride=2),  # (B, 128, 12, 16)
-            nn.ReLU(),
-            nn.Conv2d(128, 256, kernel_size=3, padding=1, stride=2),  # (B, 256, 6, 8)
-            nn.ReLU(),
-            nn.AdaptiveAvgPool2d((1, 1)),  # (B, 256, 1, 1)
+        # Improved CNN backbone with residual connections
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.relu = nn.ReLU(inplace=True)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+
+        # Residual blocks
+        self.layer1 = self._make_layer(64, 64, 2, stride=1)
+        self.layer2 = self._make_layer(64, 128, 2, stride=2)
+        self.layer3 = self._make_layer(128, 256, 2, stride=2)
+        self.layer4 = self._make_layer(256, 512, 2, stride=2)
+
+        # Global average pooling
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+
+        # Improved fully connected layers
+        self.fc = nn.Sequential(
+            nn.Dropout(0.5),
+            nn.Linear(512, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.5),
+            nn.Linear(256, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.3),
+            nn.Linear(128, n_waypoints * 2),
         )
 
-        # Fully connected layers to predict waypoints
-        self.head = nn.Sequential(
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Linear(64, n_waypoints * 2),
-        )
+        # Initialize weights
+        self.apply(self._init_weights)
+
+    def _make_layer(self, in_channels, out_channels, blocks, stride=1):
+        layers = []
+        layers.append(BottleneckBlock(in_channels, out_channels, stride))
+        for _ in range(1, blocks):
+            layers.append(BottleneckBlock(out_channels, out_channels))
+        return nn.Sequential(*layers)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Conv2d):
+            nn.init.kaiming_normal_(module.weight, mode='fan_out', nonlinearity='relu')
+        elif isinstance(module, nn.BatchNorm2d):
+            nn.init.constant_(module.weight, 1)
+            nn.init.constant_(module.bias, 0)
+        elif isinstance(module, nn.Linear):
+            nn.init.xavier_uniform_(module.weight)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
 
     def forward(self, image: torch.Tensor, **kwargs) -> torch.Tensor:
         """
@@ -203,18 +274,70 @@ class CNNPlanner(torch.nn.Module):
         x = image
         x = (x - self.input_mean[None, :, None, None]) / self.input_std[None, :, None, None]
 
-        # Pass through CNN backbone
-        x = self.features(x)
-        
-        # Flatten and pass through head
-        batch_size = x.shape[0]
-        x = x.view(batch_size, -1)
-        x = self.head(x)
+        # CNN backbone
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+
+        # Fully connected layers
+        x = self.fc(x)
 
         # Reshape to (B, n_waypoints, 2)
-        waypoints = x.view(batch_size, self.n_waypoints, 2)
+        waypoints = x.view(x.size(0), self.n_waypoints, 2)
 
         return waypoints
+
+
+class BottleneckBlock(nn.Module):
+    """Bottleneck residual block for deeper networks"""
+    def __init__(self, in_channels, out_channels, stride=1):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels//4, kernel_size=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(out_channels//4)
+        self.conv2 = nn.Conv2d(out_channels//4, out_channels//4, kernel_size=3,
+                              stride=stride, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_channels//4)
+        self.conv3 = nn.Conv2d(out_channels//4, out_channels, kernel_size=1, bias=False)
+        self.bn3 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+
+        self.downsample = None
+        if stride != 1 or in_channels != out_channels:
+            self.downsample = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_channels)
+            )
+
+    def forward(self, x):
+        identity = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = self.relu(out)
+
+        out = self.conv3(out)
+        out = self.bn3(out)
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        out += identity
+        out = self.relu(out)
+
+        return out
 
 
 MODEL_FACTORY = {

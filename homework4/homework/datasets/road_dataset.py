@@ -49,8 +49,14 @@ class RoadDataset(Dataset):
             # track_left, track_right, waypoints, waypoints_mask
             xform = road_transforms.EgoTrackProcessor(self.track)
         elif transform_pipeline == "aug":
-            # add your custom augmentations here
-            pass
+            # Data augmentation for better generalization
+            xform = road_transforms.Compose(
+                [
+                    road_transforms.ImageLoader(self.episode_path),
+                    road_transforms.EgoTrackProcessor(self.track),
+                    TrackNoiseAugmentation(noise_std=0.1),  # Add noise to track boundaries
+                ]
+            )
 
         if xform is None:
             raise ValueError(f"Invalid transform {transform_pipeline} specified!")

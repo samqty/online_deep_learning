@@ -263,3 +263,26 @@ class EgoTrackProcessor:
             "waypoints": waypoints.astype(np.float32),
             "waypoints_mask": waypoints_mask,
         }
+
+
+class TrackNoiseAugmentation:
+    """
+    Adds Gaussian noise to track boundaries for data augmentation
+    """
+    def __init__(self, noise_std: float = 0.1):
+        self.noise_std = noise_std
+
+    def __call__(self, sample: dict):
+        if "track_left" in sample and "track_right" in sample:
+            # Add noise to track boundaries
+            track_left = sample["track_left"]
+            track_right = sample["track_right"]
+            
+            # Add Gaussian noise
+            noise_left = np.random.normal(0, self.noise_std, track_left.shape)
+            noise_right = np.random.normal(0, self.noise_std, track_right.shape)
+            
+            sample["track_left"] = track_left + noise_left.astype(np.float32)
+            sample["track_right"] = track_right + noise_right.astype(np.float32)
+
+        return sample

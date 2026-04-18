@@ -46,13 +46,15 @@ def train(
     exp_dir: str = "logs",
     model_name: str = "mlp_planner",
     dataset_path: str = "drive_data",
-    num_epoch: int = 50,
-    lr: float = 1e-3,
+    num_epoch: int = 100,  # Increased from 50
+    lr: float = 3e-4,      # Adjusted learning rate
     batch_size: int = 32,
     seed: int = 2024,
     transform_pipeline: str = "default",
     num_workers: int = 2,
     val_split: float = 0.1,
+    weight_decay: float = 1e-4,  # Added weight decay
+    patience: int = 20,          # Early stopping patience
     **kwargs,
 ):
     """
@@ -133,19 +135,18 @@ def train(
     # Loss function: MSE for waypoint regression
     loss_fn = torch.nn.MSELoss()
 
-    # Optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    # Optimizer with weight decay
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
-    # Learning rate scheduler
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epoch)
+    # Learning rate scheduler with warmup
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer, max_lr=lr, epochs=num_epoch, 
+        steps_per_epoch=len(train_data), pct_start=0.1
+    )
 
     global_step = 0
-    metrics = {
-        "train_loss": [],
-        "val_l1_error": [],
-        "val_longitude": [],
-        "val_lateral": [],
-    }
+    best_val_l1 = float('inf')
+    patience_counter = 0
 
     # Training loop
     for epoch in range(num_epoch):
@@ -236,8 +237,10 @@ def train(
 
                 # Compute validation metrics
                 val_results = val_metric.compute()
+                current_val_l1 = val_results["l1_error"]
+                
                 print(
-                    f"Epoch {epoch+1}, Val L1: {val_results['l1_error']:.4f}, "
+                    f"Epoch {epoch+1}, Val L1: {current_val_l1:.4f}, "
                     f"Lon: {val_results['longitudinal_error']:.4f}, "
                     f"Lat: {val_results['lateral_error']:.4f}"
                 )
@@ -249,6 +252,20 @@ def train(
                 metrics["val_l1_error"].append(val_results["l1_error"])
                 metrics["val_longitude"].append(val_results["longitudinal_error"])
                 metrics["val_lateral"].append(val_results["lateral_error"])
+
+                # Early stopping check
+                if current_val_l1 < best_val_l1:
+                    best_val_l1 = current_val_l1
+                    patience_counter = 0
+                    # Save best model
+                    best_model_path = log_dir / f"{model_name}_best.th"
+                    torch.save(model.state_dict(), best_model_path)
+                else:
+                    patience_counter += 1
+
+                if patience_counter >= patience:
+                    print(f"Early stopping at epoch {epoch+1}")
+                    break
 
         # Print epoch summary
         avg_train_loss = np.mean(metrics["train_loss"])
@@ -271,18 +288,22 @@ if __name__ == "__main__":
                         help="Directory to save logs and models")
     parser.add_argument("--dataset_path", type=str, default="drive_data",
                         help="Path to dataset")
-    parser.add_argument("--num_epoch", type=int, default=50,
+    parser.add_argument("--num_epoch", type=int, default=100,
                         help="Number of epochs")
-    parser.add_argument("--lr", type=float, default=1e-3,
+    parser.add_argument("--lr", type=float, default=3e-4,
                         help="Learning rate")
     parser.add_argument("--batch_size", type=int, default=32,
                         help="Batch size")
     parser.add_argument("--seed", type=int, default=2024,
                         help="Random seed")
     parser.add_argument("--transform", type=str, default="default",
-                        help="Data transformation pipeline")
+                        help="Data transformation pipeline (default, state_only, aug)")
     parser.add_argument("--num_workers", type=int, default=2,
                         help="Number of data loading workers")
+    parser.add_argument("--weight_decay", type=float, default=1e-4,
+                        help="Weight decay for regularization")
+    parser.add_argument("--patience", type=int, default=20,
+                        help="Early stopping patience")
 
     args = parser.parse_args()
 
@@ -296,4 +317,6 @@ if __name__ == "__main__":
         seed=args.seed,
         transform_pipeline=args.transform,
         num_workers=args.num_workers,
+        weight_decay=args.weight_decay,
+        patience=args.patience,
     )
