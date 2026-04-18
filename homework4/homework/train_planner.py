@@ -148,6 +148,14 @@ def train(
     best_val_l1 = float('inf')
     patience_counter = 0
 
+    # Initialize metrics dictionary
+    metrics = {
+        "train_loss": [],
+        "val_l1_error": [],
+        "val_longitude": [],
+        "val_lateral": []
+    }
+
     # Training loop
     for epoch in range(num_epoch):
         # Clear metrics at beginning of epoch
