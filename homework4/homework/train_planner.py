@@ -132,8 +132,8 @@ def train(
     else:
         val_data = None
 
-    # Loss function: MSE for waypoint regression
-    loss_fn = torch.nn.MSELoss()
+    # Loss function: L1 for waypoint regression and metric alignment
+    loss_fn = torch.nn.L1Loss(reduction="none")
 
     # Optimizer with weight decay
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
@@ -189,17 +189,18 @@ def train(
 
             # Compute loss - only on valid waypoints
             if model_name == "cnn_planner":
-                loss = loss_fn(pred, y)
+                loss = loss_fn(pred, y).mean()
             else:
                 # Mask out invalid waypoints for loss computation
                 masked_pred = pred * y_mask[:, :, None]
                 masked_y = y * y_mask[:, :, None]
+                masked_error = loss_fn(masked_pred, masked_y)
                 if model_name == "transformer_planner":
-                    lon_loss = loss_fn(masked_pred[..., 0], masked_y[..., 0])
-                    lat_loss = loss_fn(masked_pred[..., 1], masked_y[..., 1])
-                    loss = lon_loss + 2.0 * lat_loss
+                    lon_loss = masked_error[..., 0].sum()
+                    lat_loss = masked_error[..., 1].sum()
+                    loss = (lon_loss + 2.5 * lat_loss) / y_mask.sum()
                 else:
-                    loss = loss_fn(masked_pred, masked_y)
+                    loss = masked_error.sum() / (y_mask.sum() * 2)
 
             # Backward pass
             optimizer.zero_grad()

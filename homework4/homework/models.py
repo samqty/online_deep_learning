@@ -119,6 +119,19 @@ class TransformerPlanner(nn.Module):
         self.track_pos_embed = nn.Embedding(n_track, d_model)
         self.query_pos_embed = nn.Embedding(n_waypoints, d_model)
 
+        # Transformer encoder for track context
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.transformer_encoder = nn.TransformerEncoder(
+            encoder_layer,
+            num_layers=2,
+        )
+
         # Transformer decoder layer with cross-attention
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=d_model,
@@ -127,8 +140,6 @@ class TransformerPlanner(nn.Module):
             dropout=dropout,
             batch_first=True,
         )
-
-        # Stack multiple decoder layers
         self.transformer_decoder = nn.TransformerDecoder(
             decoder_layer,
             num_layers=num_decoder_layers,
@@ -137,8 +148,13 @@ class TransformerPlanner(nn.Module):
         # Layer normalization
         self.norm = nn.LayerNorm(d_model)
 
-        # Output projection to 2D waypoints
-        self.output_proj = nn.Linear(d_model, 2)
+        # Output MLP to predict 2D waypoints
+        self.output_mlp = nn.Sequential(
+            nn.Linear(d_model, d_model // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model // 2, 2),
+        )
 
         # Better initialization
         self.apply(self._init_weights)
@@ -184,7 +200,8 @@ class TransformerPlanner(nn.Module):
         track_indices = torch.arange(self.n_track, device=track_left.device)
         track_pos = self.track_pos_embed(track_indices).unsqueeze(0).expand(batch_size, -1, -1)
         memory = memory + track_pos
-
+        # Encode track context
+        memory = self.transformer_encoder(memory)
         # Get query embeddings for waypoints: (n_waypoints, d_model)
         # Expand batch dimension: (b, n_waypoints, d_model)
         query_indices = torch.arange(self.n_waypoints, device=track_left.device)
@@ -200,7 +217,7 @@ class TransformerPlanner(nn.Module):
         output = self.norm(output)
 
         # Project to 2D waypoints: (b, n_waypoints, 2)
-        waypoints = self.output_proj(output)
+        waypoints = self.output_mlp(output)
 
         return waypoints
 
