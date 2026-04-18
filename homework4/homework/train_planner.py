@@ -173,6 +173,8 @@ def train(
                     x = batch["image"].to(device)
                 else:
                     raise KeyError("Image not found in batch. Use 'default' transform pipeline.")
+                track_left = batch["track_left"].to(device)
+                track_right = batch["track_right"].to(device)
                 y = batch["waypoints"].to(device)
             else:
                 # MLP and Transformer models expect track boundaries
@@ -235,6 +237,8 @@ def train(
                     # Get inputs
                     if model_name == "cnn_planner":
                         x = batch["image"].to(device)
+                        track_left = batch["track_left"].to(device)
+                        track_right = batch["track_right"].to(device)
                     else:
                         track_left = batch["track_left"].to(device)
                         track_right = batch["track_right"].to(device)
