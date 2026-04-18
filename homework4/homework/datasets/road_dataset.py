@@ -54,7 +54,7 @@ class RoadDataset(Dataset):
                 [
                     road_transforms.ImageLoader(self.episode_path),
                     road_transforms.EgoTrackProcessor(self.track),
-                    TrackNoiseAugmentation(noise_std=0.1),  # Add noise to track boundaries
+                    road_transforms.TrackNoiseAugmentation(noise_std=0.1),  # Add noise to track boundaries
                 ]
             )
 
