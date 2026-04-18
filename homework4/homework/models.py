@@ -13,16 +13,32 @@ class MLPPlanner(nn.Module):
         self,
         n_track: int = 10,
         n_waypoints: int = 3,
+        hidden_dim: int = 128,
     ):
         """
         Args:
             n_track (int): number of points in each side of the track
             n_waypoints (int): number of waypoints to predict
+            hidden_dim (int): hidden dimension for MLP layers
         """
         super().__init__()
 
         self.n_track = n_track
         self.n_waypoints = n_waypoints
+
+        # Input: (B, n_track, 2) for left and right, concatenated to (B, n_track * 4)
+        input_dim = n_track * 2 * 2  # left + right, each with 2 coords
+        output_dim = n_waypoints * 2
+
+        self.mlp = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, output_dim),
+        )
 
     def forward(
         self,
@@ -43,7 +59,20 @@ class MLPPlanner(nn.Module):
         Returns:
             torch.Tensor: future waypoints with shape (b, n_waypoints, 2)
         """
-        raise NotImplementedError
+        batch_size = track_left.shape[0]
+
+        # Concatenate left and right boundaries and flatten
+        # (b, n_track, 2) -> (b, n_track * 2)
+        x = torch.cat([track_left, track_right], dim=-1)
+        x = x.view(batch_size, -1)
+
+        # Pass through MLP
+        waypoints = self.mlp(x)
+
+        # Reshape to (b, n_waypoints, 2)
+        waypoints = waypoints.view(batch_size, self.n_waypoints, 2)
+
+        return waypoints
 
 
 class TransformerPlanner(nn.Module):
@@ -52,13 +81,38 @@ class TransformerPlanner(nn.Module):
         n_track: int = 10,
         n_waypoints: int = 3,
         d_model: int = 64,
+        nhead: int = 4,
+        num_decoder_layers: int = 2,
+        dim_feedforward: int = 256,
     ):
         super().__init__()
 
         self.n_track = n_track
         self.n_waypoints = n_waypoints
+        self.d_model = d_model
 
+        # Embedding for waypoint queries (latent array)
         self.query_embed = nn.Embedding(n_waypoints, d_model)
+
+        # Project input track points to d_model dimension
+        self.input_proj = nn.Linear(2, d_model)
+
+        # Transformer decoder layer with cross-attention
+        decoder_layer = nn.TransformerDecoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=dim_feedforward,
+            batch_first=True,
+        )
+
+        # Stack multiple decoder layers
+        self.transformer_decoder = nn.TransformerDecoder(
+            decoder_layer,
+            num_layers=num_decoder_layers,
+        )
+
+        # Output projection to 2D waypoints
+        self.output_proj = nn.Linear(d_model, 2)
 
     def forward(
         self,
@@ -79,7 +133,28 @@ class TransformerPlanner(nn.Module):
         Returns:
             torch.Tensor: future waypoints with shape (b, n_waypoints, 2)
         """
-        raise NotImplementedError
+        batch_size = track_left.shape[0]
+
+        # Concatenate track points: (b, n_track * 2, 2)
+        track_points = torch.cat([track_left, track_right], dim=1)
+        
+        # Project track points to d_model dimension: (b, n_track * 2, d_model)
+        memory = self.input_proj(track_points)
+
+        # Get query embeddings for waypoints: (n_waypoints, d_model)
+        # Expand batch dimension: (b, n_waypoints, d_model)
+        query_indices = torch.arange(self.n_waypoints, device=track_left.device)
+        tgt = self.query_embed(query_indices).unsqueeze(0).expand(batch_size, -1, -1)
+
+        # Apply transformer decoder
+        # tgt: (b, n_waypoints, d_model)
+        # memory: (b, n_track * 2, d_model)
+        output = self.transformer_decoder(tgt, memory)
+
+        # Project to 2D waypoints: (b, n_waypoints, 2)
+        waypoints = self.output_proj(output)
+
+        return waypoints
 
 
 class CNNPlanner(torch.nn.Module):
@@ -94,6 +169,29 @@ class CNNPlanner(torch.nn.Module):
         self.register_buffer("input_mean", torch.as_tensor(INPUT_MEAN), persistent=False)
         self.register_buffer("input_std", torch.as_tensor(INPUT_STD), persistent=False)
 
+        # CNN backbone for image processing
+        self.features = nn.Sequential(
+            # Input: (B, 3, 96, 128)
+            nn.Conv2d(3, 32, kernel_size=3, padding=1, stride=2),  # (B, 32, 48, 64)
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=3, padding=1, stride=2),  # (B, 64, 24, 32)
+            nn.ReLU(),
+            nn.Conv2d(64, 128, kernel_size=3, padding=1, stride=2),  # (B, 128, 12, 16)
+            nn.ReLU(),
+            nn.Conv2d(128, 256, kernel_size=3, padding=1, stride=2),  # (B, 256, 6, 8)
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d((1, 1)),  # (B, 256, 1, 1)
+        )
+
+        # Fully connected layers to predict waypoints
+        self.head = nn.Sequential(
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, n_waypoints * 2),
+        )
+
     def forward(self, image: torch.Tensor, **kwargs) -> torch.Tensor:
         """
         Args:
@@ -105,7 +203,18 @@ class CNNPlanner(torch.nn.Module):
         x = image
         x = (x - self.input_mean[None, :, None, None]) / self.input_std[None, :, None, None]
 
-        raise NotImplementedError
+        # Pass through CNN backbone
+        x = self.features(x)
+        
+        # Flatten and pass through head
+        batch_size = x.shape[0]
+        x = x.view(batch_size, -1)
+        x = self.head(x)
+
+        # Reshape to (B, n_waypoints, 2)
+        waypoints = x.view(batch_size, self.n_waypoints, 2)
+
+        return waypoints
 
 
 MODEL_FACTORY = {
