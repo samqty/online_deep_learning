@@ -176,6 +176,7 @@ def train(
                 track_left = batch["track_left"].to(device)
                 track_right = batch["track_right"].to(device)
                 y = batch["waypoints"].to(device)
+                y_mask = batch["waypoints_mask"].to(device)
             else:
                 # MLP and Transformer models expect track boundaries
                 track_left = batch["track_left"].to(device)
@@ -190,24 +191,16 @@ def train(
                 pred = model(track_left=track_left, track_right=track_right)
 
             # Compute loss - only on valid waypoints
-            if model_name == "cnn_planner":
-                # Create mask of all True for CNN (all waypoints are valid)
-                mask = torch.ones_like(y[..., 0], dtype=torch.bool)
-                masked_pred = pred * mask[:, :, None]
-                masked_y = y * mask[:, :, None]
-                masked_error = loss_fn(masked_pred, masked_y)
-                loss = masked_error.sum() / (mask.sum() * 2)
+            masked_pred = pred * y_mask[:, :, None]
+            masked_y = y * y_mask[:, :, None]
+            masked_error = loss_fn(masked_pred, masked_y)
+
+            if model_name == "transformer_planner":
+                lon_loss = masked_error[..., 0].sum()
+                lat_loss = masked_error[..., 1].sum()
+                loss = (lon_loss + 2.5 * lat_loss) / y_mask.sum()
             else:
-                # Mask out invalid waypoints for loss computation
-                masked_pred = pred * y_mask[:, :, None]
-                masked_y = y * y_mask[:, :, None]
-                masked_error = loss_fn(masked_pred, masked_y)
-                if model_name == "transformer_planner":
-                    lon_loss = masked_error[..., 0].sum()
-                    lat_loss = masked_error[..., 1].sum()
-                    loss = (lon_loss + 2.5 * lat_loss) / y_mask.sum()
-                else:
-                    loss = masked_error.sum() / (y_mask.sum() * 2)
+                loss = masked_error.sum() / (y_mask.sum() * 2)
 
             # Backward pass
             optimizer.zero_grad()
@@ -239,6 +232,7 @@ def train(
                         x = batch["image"].to(device)
                         track_left = batch["track_left"].to(device)
                         track_right = batch["track_right"].to(device)
+                        y_mask = batch["waypoints_mask"].to(device)
                     else:
                         track_left = batch["track_left"].to(device)
                         track_right = batch["track_right"].to(device)
@@ -252,13 +246,8 @@ def train(
                     else:
                         pred = model(track_left=track_left, track_right=track_right)
 
-                    # Add to metrics (mask not used for CNN, but add it for consistency)
-                    if model_name == "cnn_planner":
-                        # Create mask of all True for CNN
-                        mask = torch.ones_like(y[..., 0], dtype=torch.bool)
-                        val_metric.add(pred, y, mask)
-                    else:
-                        val_metric.add(pred, y, y_mask)
+                    # Add to metrics using the true waypoint mask
+                    val_metric.add(pred, y, y_mask)
 
                 # Compute validation metrics
                 val_results = val_metric.compute()
