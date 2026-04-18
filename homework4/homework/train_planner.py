@@ -183,13 +183,18 @@ def train(
 
             # Forward pass
             if model_name == "cnn_planner":
-                pred = model(image=x)
+                pred = model(image=x, track_left=track_left, track_right=track_right)
             else:
                 pred = model(track_left=track_left, track_right=track_right)
 
             # Compute loss - only on valid waypoints
             if model_name == "cnn_planner":
-                loss = loss_fn(pred, y).mean()
+                # Create mask of all True for CNN (all waypoints are valid)
+                mask = torch.ones_like(y[..., 0], dtype=torch.bool)
+                masked_pred = pred * mask[:, :, None]
+                masked_y = y * mask[:, :, None]
+                masked_error = loss_fn(masked_pred, masked_y)
+                loss = masked_error.sum() / (mask.sum() * 2)
             else:
                 # Mask out invalid waypoints for loss computation
                 masked_pred = pred * y_mask[:, :, None]
@@ -239,7 +244,7 @@ def train(
 
                     # Forward pass
                     if model_name == "cnn_planner":
-                        pred = model(image=x)
+                        pred = model(image=x, track_left=track_left, track_right=track_right)
                     else:
                         pred = model(track_left=track_left, track_right=track_right)
 

@@ -226,13 +226,26 @@ class CNNPlanner(torch.nn.Module):
     def __init__(
         self,
         n_waypoints: int = 3,
+        n_track: int = 10,
     ):
         super().__init__()
 
         self.n_waypoints = n_waypoints
+        self.n_track = n_track
 
         self.register_buffer("input_mean", torch.as_tensor(INPUT_MEAN), persistent=False)
         self.register_buffer("input_std", torch.as_tensor(INPUT_STD), persistent=False)
+
+        # Track encoder for boundary information
+        self.track_encoder = nn.Sequential(
+            nn.Linear(n_track * 2 * 2, 256),  # track_left + track_right flattened
+            nn.BatchNorm1d(256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.3),
+            nn.Linear(256, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(inplace=True),
+        )
 
         # Improved CNN backbone with residual connections
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
@@ -249,10 +262,10 @@ class CNNPlanner(torch.nn.Module):
         # Global average pooling
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
 
-        # Improved fully connected layers
+        # Improved fully connected layers - now takes image features + track features
         self.fc = nn.Sequential(
             nn.Dropout(0.5),
-            nn.Linear(512, 256),
+            nn.Linear(512 + 128, 256),
             nn.BatchNorm1d(256),
             nn.ReLU(inplace=True),
             nn.Dropout(0.5),
@@ -284,14 +297,24 @@ class CNNPlanner(torch.nn.Module):
             if module.bias is not None:
                 nn.init.zeros_(module.bias)
 
-    def forward(self, image: torch.Tensor, **kwargs) -> torch.Tensor:
+    def forward(self, image: torch.Tensor, track_left: torch.Tensor, track_right: torch.Tensor, **kwargs) -> torch.Tensor:
         """
         Args:
             image (torch.FloatTensor): shape (b, 3, h, w) and vals in [0, 1]
+            track_left (torch.Tensor): shape (b, n_track, 2)
+            track_right (torch.Tensor): shape (b, n_track, 2)
 
         Returns:
             torch.FloatTensor: future waypoints with shape (b, n, 2)
         """
+        batch_size = image.shape[0]
+
+        # Encode track boundaries
+        track_combined = torch.cat([track_left, track_right], dim=-1)  # (b, n_track, 4)
+        track_flat = track_combined.view(batch_size, -1)  # (b, n_track * 4)
+        track_features = self.track_encoder(track_flat)  # (b, 128)
+
+        # Process image
         x = image
         x = (x - self.input_mean[None, :, None, None]) / self.input_std[None, :, None, None]
 
@@ -307,10 +330,13 @@ class CNNPlanner(torch.nn.Module):
         x = self.layer4(x)
 
         x = self.avgpool(x)
-        x = torch.flatten(x, 1)
+        x = torch.flatten(x, 1)  # (b, 512)
+
+        # Concatenate image and track features
+        combined_features = torch.cat([x, track_features], dim=1)  # (b, 512 + 128)
 
         # Fully connected layers
-        x = self.fc(x)
+        x = self.fc(combined_features)
 
         # Reshape to (B, n_waypoints, 2)
         waypoints = x.view(x.size(0), self.n_waypoints, 2)
